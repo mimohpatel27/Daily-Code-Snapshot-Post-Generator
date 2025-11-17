@@ -1,0 +1,252 @@
+#Install Libraries 
+
+!pip install google-genai pytesseract opencv-python-headless pillow numpy pygments
+
+#install Tesseract
+
+!apt-get update -qq
+!apt-get install -y -qq tesseract-ocr libtesseract-dev
+
+#importing libraries + gemini API key setup
+
+
+import os
+import io
+import re
+import cv2
+import numpy as np
+from PIL import Image
+import pytesseract
+from pygments.lexers import guess_lexer
+from pygments.util import ClassNotFound
+from datetime import datetime
+
+# Gemini imports
+from google import genai
+
+# SET YOUR API KEY HERE
+os.environ["GEMINI_API_KEY"] = "Your_API_Key"
+
+# initialize client
+client = genai.Client()
+
+#takeing input
+
+
+from google.colab import files
+
+print("Click the button below to upload your CODE SCREENSHOT:")
+uploaded = files.upload()
+
+filename = list(uploaded.keys())[0]
+image_bytes = uploaded[filename]
+
+print("Uploaded:", filename)
+
+# convert bytes → PIL Image → numpy array
+image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+np_image = np.array(image)
+
+#OCR Processing 
+
+
+def preprocess_for_ocr(np_img):
+    gray = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
+
+    # scale small images up
+    h, w = gray.shape
+    if max(h, w) < 1000:
+        gray = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+
+    # denoise + threshold
+    gray = cv2.bilateralFilter(gray, 9, 75, 75)
+    th = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, 15, 9
+    )
+    return th
+
+processed = preprocess_for_ocr(np_image)
+print("Preprocessing done.")
+
+#OCR to Text
+
+def ocr_image_to_text(img):
+    pil_img = Image.fromarray(img)
+    config = r'--oem 3 --psm 6'
+    text = pytesseract.image_to_string(pil_img, config=config)
+    return text
+
+raw_text = ocr_image_to_text(processed)
+
+print("---- RAW OCR (first 500 chars) ----")
+print(raw_text[:500])
+
+#code text
+
+def clean_ocr_text(text):
+    text = text.replace("\r", "\n")
+    text = re.sub(r"[^\x00-\x7F]+", "", text)  # remove weird chars
+
+    lines = text.splitlines()
+    code_lines = []
+
+    for L in lines:
+        # conditions that indicate code-like lines
+        if re.search(r"(class|def|public|static|import|from)", L):
+            code_lines.append(L)
+        elif re.search(r"[{}();=#<>\[\]]", L):
+            code_lines.append(L)
+        elif re.match(r"^\s{2,}", L):
+            code_lines.append(L)
+        else:
+            if len(L.strip()) > 20:
+                code_lines.append(L)
+
+    if not code_lines:
+        code_lines = [L for L in lines if L.strip()]
+
+    return "\n".join(code_lines).strip()
+
+code_text = clean_ocr_text(raw_text)
+
+print("---- CLEANED CODE TEXT ----")
+print(code_text[:500])
+
+
+#language detection
+
+def detect_language(code):
+    try:
+        lexer = guess_lexer(code)
+        name = lexer.name.lower()
+        if "python" in name:
+            return "python"
+        if "java" in name:
+            return "java"
+        if "javascript" in name or "js" in name:
+            return "javascript"
+        if "cpp" in name or "c++" in name:
+            return "cpp"
+        if "c#" in name:
+            return "csharp"
+        return name
+    except ClassNotFound:
+        if re.search(r"def |import ", code):
+            return "python"
+        if re.search(r"public |static ", code):
+            return "java"
+        return "text"
+
+language = detect_language(code_text)
+print("Detected language:", language)
+
+
+#prompt templet 
+
+POST_PROMPT = """
+You are an AI assistant that converts a code snippet into a clean social-media post for #300DaysOfCode.
+
+CODE:
+\"\"\"{code}\"\"\"
+
+LANGUAGE: {language}
+TONE: {tone}
+PLATFORM: {platform}
+
+Write output in JSON with these keys:
+- hook
+- summary
+- approach
+- tip
+- hashtags
+
+Make the writing clean, short, human, and easy to post.
+"""
+
+
+#gemini LLM Function 
+
+def generate_post_with_gemini(code, language, tone="Casual", platform="LinkedIn"):
+    prompt = POST_PROMPT.format(
+        code=code.replace('"""', "'''"),
+        language=language,
+        tone=tone,
+        platform=platform
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+
+    # extract the text output
+    try:
+        text = response.text
+    except:
+        text = response.candidates[0].content.parts[0].text
+
+    return text
+
+# RUN
+llm_output = generate_post_with_gemini(code_text, language)
+print(llm_output)
+
+
+#JSON parse
+
+import json
+
+def parse_post(text):
+    try:
+        start = text.find("{")
+        end = text.rfind("}")
+        json_text = text[start:end+1]
+        return json.loads(json_text)
+    except:
+        return {
+            "hook": "Today's coding progress!",
+            "summary": text[:150],
+            "approach": "",
+            "tip": "",
+            "hashtags": "#300DaysOfCode"
+        }
+
+parsed = parse_post(llm_output)
+parsed
+
+
+# Format of final post
+
+final_post = f"""
+{parsed.get('hook','')}
+
+{parsed.get('summary','')}
+
+Approach:
+{parsed.get('approach','')}
+
+Tip:
+{parsed.get('tip','')}
+
+Hashtags:
+{parsed.get('hashtags','')}
+"""
+
+print(final_post)
+
+
+#download final post 
+
+filename = "Daily_Code_Post.txt"
+
+with open(filename, "w", encoding="utf-8") as f:
+    f.write(final_post)
+
+print("Saved:", filename)
+
+from google.colab import files
+files.download(filename)
+
+
+
