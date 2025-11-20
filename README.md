@@ -107,6 +107,35 @@ This pipeline is implemented as a Colab notebook (fast demo) and as standalone P
 !apt-get update -qq
 !apt-get install -y -qq tesseract-ocr libtesseract-dev
 
+# cell 3- Set your Gemini API key (replace with your key):
+!import os
+!os.environ["GEMINI_API_KEY"] = "YOUR_GEMINI_API_KEY"
+
+#cell 4 - Run the notebook cells (imports, upload, preprocess, OCR, generate).
+
+Upload via the visible button (Colab files.upload()).
+
+The notebook will output the post and create a downloadable .txt file.
+
+!git clone https://github.com/YOUR_USER/daily-code-snapshot-agent.git
+!cd daily-code-snapshot-agent
+!python3 -m venv venv
+!source venv/bin/activate
+!pip install -r requirements.txt
+!google-genai
+!pytesseract
+!opencv-python-headless
+!pillow
+!pygments
+!numpy
+!sudo apt-get update
+!sudo apt-get install tesseract-ocr
+!brew install tesseract
+!export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+!python run_agent.py --image assets/sample_screenshot.png --tone Casual --platform LinkedIn
+
+
+
 
 🔥 Day 308 of #300DaysOfCode — Reinforced DP fundamentals!
 
